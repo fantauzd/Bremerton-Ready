@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Bremerton Ready street familiarization prototype for City of Bremerton personnel." />
+  <title>Bremerton Ready</title>
+
+  <link rel="stylesheet" href="https://js.arcgis.com/5.1/esri/themes/light/main.css" />
+  <link rel="stylesheet" href="./styles.css?v=1.4.2" />
+
+  <script src="./config.js?v=1.4.2"></script>
+  <script type="module" src="https://js.arcgis.com/5.1/"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="brand-wrap">
+        <div class="brand-mark" aria-hidden="true">
+          <img id="brandLogo" alt="" hidden />
+          <span id="brandFallback">BR</span>
+        </div>
+        <div>
+          <h1 id="appName">Bremerton Ready</h1>
+          <p id="appSubtitle">Street Familiarization</p>
+        </div>
+      </div>
+      <div class="header-note">
+        <strong id="departmentName">Bremerton Fire Department</strong>
+        <span>Powered by City of Bremerton GIS</span>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <aside class="sidebar" aria-label="Training controls">
+        <nav class="mode-tabs" aria-label="Mode">
+          <button class="mode-tab is-active" data-mode="explore">Explore</button>
+          <button class="mode-tab" data-mode="name">Name This Street</button>
+          <button class="mode-tab" data-mode="find">Find This Street</button>
+        </nav>
+
+        <section class="control-card compact-card">
+          <div class="control-grid">
+            <label class="field-label" for="studyArea">
+              Study area
+              <select id="studyArea">
+                <option value="citywide">Citywide</option>
+                <option value="1">Council District 1</option>
+                <option value="2">Council District 2</option>
+                <option value="3">Council District 3</option>
+                <option value="4">Council District 4</option>
+                <option value="5">Council District 5</option>
+                <option value="6">Council District 6</option>
+                <option value="7">Council District 7</option>
+              </select>
+            </label>
+
+            <label class="field-label" for="difficulty">
+              Difficulty
+              <select id="difficulty">
+                <option value="learn">Learn</option>
+                <option value="practice">Practice</option>
+                <option value="challenge">Challenge</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="area-meta">
+            <span id="poolCount">Loading streets…</span>
+            <button id="resetViewButton" class="text-button" type="button">Reset map</button>
+          </div>
+        </section>
+
+        <section id="explorePanel" class="mode-panel">
+          <div class="panel-heading">
+            <span class="eyebrow">Explore</span>
+            <h2>Learn the street network</h2>
+            <p>Search for a street or click any named pavement segment. The complete matching street inside the selected study area will highlight.</p>
+          </div>
+
+          <div class="search-row">
+            <label class="sr-only" for="streetSearch">Street name</label>
+            <input id="streetSearch" list="streetOptions" autocomplete="off" placeholder="Search streets…" />
+            <datalist id="streetOptions"></datalist>
+            <button id="streetSearchButton" class="primary-button" type="button">Show</button>
+          </div>
+
+          <div id="streetInfo" class="street-info empty-state">
+            <strong>Select a street</strong>
+            <span>Click the map or search above.</span>
+          </div>
+        </section>
+
+        <section id="quizPanel" class="mode-panel" hidden>
+          <div class="panel-heading">
+            <span id="quizModeEyebrow" class="eyebrow">Quiz</span>
+            <h2 id="quizPrompt">Ready?</h2>
+            <p id="quizInstruction">Start a question when the map finishes loading.</p>
+          </div>
+
+          <div class="streak-bar" aria-label="Quiz streak">
+            <div class="streak-current">
+              <span id="streakFlame" class="streak-flame" aria-hidden="true">🔥</span>
+              <span><strong id="currentStreak">0</strong> streak</span>
+            </div>
+            <div class="streak-best">Best: <strong id="bestStreak">0</strong></div>
+          </div>
+
+          <div id="multipleChoice" class="choice-grid" hidden></div>
+
+          <div id="typedAnswerWrap" class="answer-row" hidden>
+            <label class="sr-only" for="typedAnswer">Street name</label>
+            <input id="typedAnswer" autocomplete="off" placeholder="Type the street name…" />
+            <button id="checkAnswerButton" class="primary-button" type="button">Check</button>
+          </div>
+
+          <div id="feedback" class="feedback" aria-live="polite"></div>
+
+          <div class="quiz-actions">
+            <button id="newQuestionButton" class="primary-button" type="button">Start Question</button>
+            <button id="revealButton" class="secondary-button" type="button" hidden>Show Answer</button>
+          </div>
+        </section>
+
+        <section class="control-card help-card">
+          <details>
+            <summary>How this site works</summary>
+            <p><strong>Learn:</strong> full street + multiple choice.</p>
+            <p><strong>Practice:</strong> full street + typed answer.</p>
+            <p><strong>Challenge:</strong> one strong street segment + typed answer.</p>
+            <p>For Find This Street, difficulty changes how much feedback you receive after an incorrect click.</p>
+            <p><strong>Typed answers:</strong> the base street name is enough when it is unique in the selected study area. If multiple streets share that name, the full street name is required.</p>
+          </details>
+        </section>
+      </aside>
+
+      <section class="map-shell" aria-label="Bremerton map">
+        <div id="loadingBanner" class="loading-banner">Connecting to Bremerton GIS…</div>
+        <div id="viewDiv"></div>
+
+        <div class="context-stack" aria-label="Map context controls">
+          <label class="context-control" for="contextToggle">
+            <span class="context-copy">
+              <strong>Map context</strong>
+              <span id="contextStatus">Loading…</span>
+            </span>
+            <input id="contextToggle" type="checkbox" checked disabled />
+            <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+          </label>
+          <div id="contextAttribution" class="context-attribution" hidden>
+            Light Gray Canvas Base © Esri and contributors
+          </div>
+        </div>
+
+        <div id="mapHint" class="map-hint">Explore: click a street to identify it.</div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span>Prototype for geographic familiarization of City of Bremerton personnel.</span>
+      <span class="creator-credit">Made by <strong>Dominic Fantauzzo</strong></span>
+      <span>Street and study-area information derived from City GIS.</span>
+    </footer>
+  </div>
+
+  <script src="./app.js?v=1.4.2"></script>
+</body>
+</html>
