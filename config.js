@@ -14,6 +14,20 @@ window.BREMERTON_READY_CONFIG = Object.freeze({
     districts: "https://imagegis.bremertonwa.gov/arcgis/rest/services/Hosted/Council_Districts_2020/FeatureServer/2"
   },
 
+  // Resilient local backup. The app always tries live City GIS first.
+  // If either live service fails, both datasets switch to these same-origin
+  // GeoJSON snapshots so GitHub Pages can keep operating during GIS outages.
+  fallbackData: {
+    enabled: true,
+    streetsUrl: "./data/streets.geojson",
+    districtsUrl: "./data/council-districts.geojson",
+    metadataUrl: "./data/backup-meta.json",
+    liveLoadTimeoutMs: 8000,
+    fallbackLoadTimeoutMs: 12000,
+    // Add ?data=cached to the page URL to test the packaged GeoJSON even when live GIS is healthy.
+    testQueryParameter: "data"
+  },
+
   // Optional contextual basemap. This is never required for core app operation.
   // This public portal item is Esri's Light Gray Canvas *Base* layer. Labels are
   // published separately in the Light Gray Canvas Reference layer, which we do
@@ -37,6 +51,7 @@ window.BREMERTON_READY_CONFIG = Object.freeze({
     fromStreet: "from_",
     toStreet: "to_",
     shapeLength: "shape_leng",
+    cachedCitywide: "br_citywide",
     councilDistrict: "council"
   },
 

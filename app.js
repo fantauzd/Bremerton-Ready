@@ -1,4 +1,4 @@
-// Bremerton Ready application bootstrap.
+// Bremerton Ready v1.5.1 application bootstrap.
 // Intentionally loaded as a classic script so local test servers with incorrect
 // JavaScript MIME mappings do not trigger strict ES-module MIME blocking.
 (async () => {
@@ -17,10 +17,11 @@ const waitForArcGIS = async () => {
 
 await waitForArcGIS();
 
-const [EsriMap, MapView, FeatureLayer, GraphicsLayer, Graphic, VectorTileLayer] = await $arcgis.import([
+const [EsriMap, MapView, FeatureLayer, GeoJSONLayer, GraphicsLayer, Graphic, VectorTileLayer] = await $arcgis.import([
   "@arcgis/core/Map.js",
   "@arcgis/core/views/MapView.js",
   "@arcgis/core/layers/FeatureLayer.js",
+  "@arcgis/core/layers/GeoJSONLayer.js",
   "@arcgis/core/layers/GraphicsLayer.js",
   "@arcgis/core/Graphic.js",
   "@arcgis/core/layers/VectorTileLayer.js"
@@ -105,7 +106,9 @@ const state = {
   initialized: false,
   contextLayer: null,
   contextReady: false,
-  contextFailed: false
+  contextFailed: false,
+  dataMode: "unknown",
+  dataSnapshotDate: null
 };
 
 const STREAK_STORAGE_KEYS = {
@@ -167,86 +170,130 @@ loadStreakState();
 renderStreak();
 
 const eligibleWhere = `${F.fullName} IS NOT NULL`;
+const cachedCitywideWhere = `${F.cachedCitywide} = 1`;
 const contextConfig = CONFIG.contextBasemap || {};
 
-const streetLayer = new FeatureLayer({
-  url: CONFIG.services.streets,
-  title: "Bremerton Streets",
-  outFields: [
-    F.streetOid,
-    F.fullName,
-    F.streetName,
-    F.streetType,
-    F.prefix,
-    F.suffix,
-    F.fromStreet,
-    F.toStreet,
-    F.shapeLength
-  ],
-  popupEnabled: false,
-  renderer: {
-    type: "simple",
-    symbol: {
-      type: "simple-line",
-      color: C.streets,
-      width: 1.7,
-      cap: "round",
-      join: "round"
+let streetLayer = null;
+let streetLabelLayer = null;
+let districtLayer = null;
+
+const streetRenderer = {
+  type: "simple",
+  symbol: {
+    type: "simple-line",
+    color: C.streets,
+    width: 1.7,
+    cap: "round",
+    join: "round"
+  }
+};
+
+const streetLabelingInfo = [{
+  labelExpressionInfo: { expression: `$feature.${F.fullName}` },
+  labelPlacement: "center-along",
+  repeatLabel: false,
+  symbol: {
+    type: "text",
+    color: "#4b5c66",
+    haloColor: "#ffffff",
+    haloSize: 1.2,
+    font: {
+      family: "Arial",
+      size: 8.5,
+      weight: "normal"
     }
   }
-});
+}];
 
-// Labels exist only in Explore mode. Quiz modes intentionally hide them.
-const streetLabelLayer = new FeatureLayer({
-  url: CONFIG.services.streets,
-  title: "Street Labels",
-  definitionExpression: eligibleWhere,
-  popupEnabled: false,
-  minScale: 22000,
-  renderer: {
-    type: "simple",
-    symbol: {
-      type: "simple-line",
-      color: [0, 0, 0, 0],
-      width: 0.1
-    }
-  },
-  labelingInfo: [{
-    labelExpressionInfo: { expression: `$feature.${F.fullName}` },
-    labelPlacement: "center-along",
-    repeatLabel: false,
-    symbol: {
-      type: "text",
-      color: "#4b5c66",
-      haloColor: "#ffffff",
-      haloSize: 1.2,
-      font: {
-        family: "Arial",
-        size: 8.5,
-        weight: "normal"
-      }
-    }
-  }]
-});
+const invisibleStreetRenderer = {
+  type: "simple",
+  symbol: {
+    type: "simple-line",
+    color: [0, 0, 0, 0],
+    width: 0.1
+  }
+};
 
-const districtLayer = new FeatureLayer({
-  url: CONFIG.services.districts,
-  title: "Council Districts",
-  outFields: [F.councilDistrict],
-  popupEnabled: false,
-  renderer: {
-    type: "simple",
-    symbol: {
-      type: "simple-fill",
-      color: [255, 255, 255, 0],
-      outline: {
-        color: C.districtOutline,
-        width: 1.2,
-        style: "dash"
-      }
+const districtRenderer = {
+  type: "simple",
+  symbol: {
+    type: "simple-fill",
+    color: [255, 255, 255, 0],
+    outline: {
+      color: C.districtOutline,
+      width: 1.2,
+      style: "dash"
     }
   }
-});
+};
+
+function createLiveDataLayers() {
+  return {
+    streets: new FeatureLayer({
+      url: CONFIG.services.streets,
+      title: "Bremerton Streets",
+      outFields: [
+        F.streetOid, F.fullName, F.streetName, F.streetType, F.prefix, F.suffix,
+        F.fromStreet, F.toStreet, F.shapeLength
+      ],
+      popupEnabled: false,
+      renderer: streetRenderer
+    }),
+    labels: new FeatureLayer({
+      url: CONFIG.services.streets,
+      title: "Street Labels",
+      definitionExpression: eligibleWhere,
+      popupEnabled: false,
+      minScale: 22000,
+      renderer: invisibleStreetRenderer,
+      labelingInfo: streetLabelingInfo
+    }),
+    districts: new FeatureLayer({
+      url: CONFIG.services.districts,
+      title: "Council Districts",
+      outFields: [F.councilDistrict],
+      popupEnabled: false,
+      renderer: districtRenderer
+    })
+  };
+}
+
+function createFallbackDataLayers() {
+  const fallback = CONFIG.fallbackData || {};
+  return {
+    streets: new GeoJSONLayer({
+      url: fallback.streetsUrl,
+      title: "Bremerton Streets — Cached",
+      geometryType: "polyline",
+      definitionExpression: cachedCitywideWhere,
+      outFields: [
+        F.streetOid, F.fullName, F.streetName, F.streetType, F.prefix, F.suffix,
+        F.fromStreet, F.toStreet, F.shapeLength, F.cachedCitywide
+      ],
+      popupEnabled: false,
+      renderer: streetRenderer
+    }),
+    labels: new GeoJSONLayer({
+      url: fallback.streetsUrl,
+      title: "Street Labels — Cached",
+      geometryType: "polyline",
+      definitionExpression: cachedCitywideWhere,
+      outFields: [F.fullName],
+      popupEnabled: false,
+      minScale: 22000,
+      renderer: invisibleStreetRenderer,
+      labelingInfo: streetLabelingInfo
+    }),
+    districts: new GeoJSONLayer({
+      url: fallback.districtsUrl,
+      title: "Council Districts — Cached",
+      geometryType: "polygon",
+      outFields: [F.councilDistrict],
+      popupEnabled: false,
+      renderer: districtRenderer
+    })
+  };
+}
 
 const districtHighlightLayer = new GraphicsLayer({ title: "Selected Study Area" });
 const streetHighlightLayer = new GraphicsLayer({ title: "Street Highlight" });
@@ -267,9 +314,6 @@ const contextLayer = (contextConfig.enabled && contextConfig.portalItemId)
 
 const operationalLayers = [
   ...(contextLayer ? [contextLayer] : []),
-  districtLayer,
-  streetLayer,
-  streetLabelLayer,
   districtHighlightLayer,
   streetHighlightLayer,
   feedbackHighlightLayer
@@ -306,9 +350,18 @@ initialize().catch((error) => showFatalError(error));
 
 async function initialize() {
   setLoading("Connecting to Bremerton GIS…");
-  await Promise.all([view.when(), streetLayer.load(), districtLayer.load(), streetLabelLayer.load()]);
+  await view.when();
 
-  const extentResult = await streetLayer.queryExtent({ where: eligibleWhere });
+  const dataBundle = await resolveCityDataLayers();
+  streetLayer = dataBundle.streets;
+  streetLabelLayer = dataBundle.labels;
+  districtLayer = dataBundle.districts;
+
+  // Keep City data below quiz/highlight graphics and above the optional context layer.
+  const insertionIndex = contextLayer ? 1 : 0;
+  map.addMany([districtLayer, streetLayer, streetLabelLayer], insertionIndex);
+
+  const extentResult = await streetLayer.queryExtent({ where: activeStreetWhere() });
   if (extentResult.extent) {
     state.initialExtent = extentResult.extent.expand(1.05);
     await view.goTo(state.initialExtent, { animate: false });
@@ -319,10 +372,92 @@ async function initialize() {
   state.initialized = true;
   setLoading(null);
 
-  // The optional context basemap is intentionally non-blocking. Core Bremerton GIS
-  // functionality is ready before this starts, and any failure simply leaves the
-  // original blank background in place.
+  // The optional context basemap is intentionally non-blocking. Core street
+  // training is ready before this starts, and any failure simply leaves the
+  // background blank.
   initializeContextBasemap();
+}
+
+async function resolveCityDataLayers() {
+  const fallback = CONFIG.fallbackData || {};
+  const liveTimeout = Number(fallback.liveLoadTimeoutMs) || 8000;
+  const forcedCached = requestedDataMode() === "cached";
+
+  if (!forcedCached) {
+    const live = createLiveDataLayers();
+    try {
+      await loadDataBundle(live, liveTimeout, "Live City GIS timed out.");
+      state.dataMode = "live";
+      state.dataSnapshotDate = null;
+      console.info("Bremerton Ready data source: live City GIS.");
+      return live;
+    } catch (liveError) {
+      destroyDataBundle(live);
+      console.warn("Live City GIS unavailable. Attempting cached GeoJSON backup.", liveError);
+    }
+  } else {
+    console.info("Bremerton Ready data source: cached GeoJSON forced by ?data=cached for testing.");
+  }
+
+  if (!fallback.enabled || !fallback.streetsUrl || !fallback.districtsUrl) {
+    throw new Error("Live City GIS is unavailable and cached backup data is disabled.");
+  }
+
+  setLoading(forcedCached ? "Loading cached GIS test…" : "City GIS unavailable — loading cached backup…");
+  const cached = createFallbackDataLayers();
+  try {
+    const cachedTimeout = Number(fallback.fallbackLoadTimeoutMs) || 12000;
+    await loadDataBundle(cached, cachedTimeout, "Cached GeoJSON data timed out.");
+    state.dataMode = "cached";
+    state.dataSnapshotDate = await loadFallbackMetadataDate();
+    console.warn("Bremerton Ready data source: cached GeoJSON backup.", {
+      snapshotDate: state.dataSnapshotDate || "unknown",
+      forcedForTesting: forcedCached
+    });
+    return cached;
+  } catch (cachedError) {
+    destroyDataBundle(cached);
+    throw new AggregateError(
+      [cachedError],
+      "Live City GIS is unavailable and the cached GeoJSON backup could not be loaded."
+    );
+  }
+}
+
+function requestedDataMode() {
+  const parameter = CONFIG.fallbackData?.testQueryParameter || "data";
+  return new URLSearchParams(window.location.search).get(parameter)?.trim().toLowerCase() || "";
+}
+
+function activeStreetWhere() {
+  return state.dataMode === "cached" ? cachedCitywideWhere : eligibleWhere;
+}
+
+async function loadDataBundle(bundle, timeoutMs, timeoutMessage) {
+  await promiseWithTimeout(
+    Promise.all([bundle.streets.load(), bundle.labels.load(), bundle.districts.load()]),
+    timeoutMs,
+    timeoutMessage
+  );
+}
+
+function destroyDataBundle(bundle) {
+  for (const layer of Object.values(bundle || {})) {
+    try { layer?.destroy?.(); } catch (_) { /* no-op */ }
+  }
+}
+
+async function loadFallbackMetadataDate() {
+  const url = CONFIG.fallbackData?.metadataUrl;
+  if (!url) return null;
+  try {
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) return null;
+    const metadata = await response.json();
+    return metadata.generatedDate || metadata.generatedUtc || null;
+  } catch (_) {
+    return null;
+  }
 }
 
 function wireEvents() {
@@ -525,13 +660,25 @@ async function updateStudyArea({ zoom = true } = {}) {
 
   if (state.studyArea !== "citywide") {
     const query = districtLayer.createQuery();
-    query.where = `${F.councilDistrict} = '${escapeSql(state.studyArea)}'`;
     query.outFields = [F.councilDistrict];
     query.returnGeometry = true;
     query.outSpatialReference = streetLayer.spatialReference;
 
-    const result = await districtLayer.queryFeatures(query);
-    const district = result.features[0];
+    let district = null;
+    if (state.dataMode === "cached") {
+      // GeoJSON attribute types are inferred from the snapshot. Avoid relying on
+      // SQL coercion between numeric and text council values.
+      query.where = "1=1";
+      const result = await districtLayer.queryFeatures(query);
+      district = result.features.find((feature) =>
+        String(feature.attributes?.[F.councilDistrict] ?? "") === String(state.studyArea)
+      );
+    } else {
+      query.where = `${F.councilDistrict} = '${escapeSql(state.studyArea)}'`;
+      const result = await districtLayer.queryFeatures(query);
+      district = result.features[0];
+    }
+
     if (!district) throw new Error(`Council District ${state.studyArea} was not found.`);
 
     state.districtGeometry = district.geometry;
@@ -558,7 +705,7 @@ async function updateStudyArea({ zoom = true } = {}) {
 
 async function getStreetPool(geometry) {
   const query = streetLayer.createQuery();
-  query.where = eligibleWhere;
+  query.where = activeStreetWhere();
   query.outFields = [F.fullName, F.streetName, F.streetType, F.prefix, F.suffix];
   query.returnGeometry = false;
 
@@ -608,6 +755,13 @@ function buildStreetNameGroups(names, meta) {
 }
 
 async function queryAllPages(layer, baseQuery) {
+  // Cached GeoJSON is already fully downloaded to the browser, so there is no
+  // ArcGIS Server transfer limit to page through.
+  if (state.dataMode === "cached") {
+    const result = await layer.queryFeatures(baseQuery);
+    return result.features;
+  }
+
   const all = [];
   let start = 0;
   const pageSize = CONFIG.query.pageSize;
@@ -639,7 +793,19 @@ function renderStreetOptions() {
 
 function updatePoolCount() {
   const areaLabel = state.studyArea === "citywide" ? "Citywide" : `District ${state.studyArea}`;
-  els.poolCount.textContent = `${areaLabel}: ${state.streetPool.length.toLocaleString()} quiz streets`;
+  let sourceLabel = "Live GIS";
+  if (state.dataMode === "cached") {
+    const date = formatSnapshotDate(state.dataSnapshotDate);
+    sourceLabel = date ? `Cached GIS · ${date}` : "Cached GIS";
+  }
+  els.poolCount.textContent = `${areaLabel}: ${state.streetPool.length.toLocaleString()} quiz streets · ${sourceLabel}`;
+}
+
+function formatSnapshotDate(value) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value).slice(0, 10);
+  return parsed.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
 async function resetMapView() {
@@ -676,13 +842,40 @@ async function searchStreet() {
   await zoomToFeatures(features, 1.35);
 }
 
+async function resolveStreetHitAttributes(graphic) {
+  const attrs = graphic?.attributes || {};
+  if (cleanStreetName(attrs[F.fullName])) return attrs;
+
+  // GeoJSONLayer hit-test graphics can be intentionally thin and may only
+  // contain the generated/object ID even though queryFeatures has all fields.
+  // Resolve the complete source feature by its object ID when needed.
+  const objectIdField = streetLayer?.objectIdField || F.streetOid;
+  const objectId = graphic?.getAttribute?.(objectIdField) ?? attrs[objectIdField] ?? attrs[F.streetOid];
+  if (objectId == null) return attrs;
+
+  try {
+    const query = streetLayer.createQuery();
+    query.objectIds = [objectId];
+    query.outFields = [
+      F.streetOid, F.fullName, F.streetName, F.streetType, F.prefix, F.suffix,
+      F.fromStreet, F.toStreet, F.shapeLength, F.cachedCitywide
+    ];
+    query.returnGeometry = false;
+    const result = await streetLayer.queryFeatures(query);
+    return result.features[0]?.attributes || attrs;
+  } catch (error) {
+    console.warn("Could not resolve clicked street attributes from cached GIS.", error);
+    return attrs;
+  }
+}
+
 async function handleExploreClick(event) {
   const hit = await view.hitTest(event, { include: [streetLayer] });
   const result = hit.results.find((item) => item.graphic?.layer === streetLayer);
   if (!result) return;
 
-  const attrs = result.graphic.attributes || {};
-  const name = cleanStreetName(attrs[F.fullName]);
+  const attrs = await resolveStreetHitAttributes(result.graphic);
+  const name = cleanStreetName(attrs?.[F.fullName]);
   if (!name) {
     setStreetInfo("Unnamed pavement segment", "This feature is not included in quiz questions yet.", true);
     return;
@@ -870,7 +1063,8 @@ async function handleFindClick(event) {
     return;
   }
 
-  const clickedName = cleanStreetName(result.graphic.attributes?.[F.fullName]);
+  const clickedAttrs = await resolveStreetHitAttributes(result.graphic);
+  const clickedName = cleanStreetName(clickedAttrs?.[F.fullName]);
   if (!clickedName) {
     setFeedback("That pavement segment does not have a street name yet.", "error");
     return;
@@ -951,7 +1145,8 @@ function clearQuiz({ keepPrompt = false } = {}) {
 
 async function queryStreetFeatures(streetName, geometry) {
   const query = streetLayer.createQuery();
-  query.where = `${F.fullName} = '${escapeSql(streetName)}'`;
+  query.where = `${F.fullName} = '${escapeSql(streetName)}'` +
+    (state.dataMode === "cached" ? ` AND ${F.cachedCitywide} = 1` : "");
   query.outFields = [
     F.streetOid,
     F.fullName,
@@ -1196,8 +1391,8 @@ function showFatalError(error) {
   console.error(error);
   els.loadingBanner.hidden = false;
   els.loadingBanner.classList.add("is-error");
-  els.loadingBanner.textContent = "Bremerton Ready could not load. Check the console and GIS service availability.";
-  els.poolCount.textContent = "GIS connection error";
+  els.loadingBanner.textContent = "Bremerton Ready could not load City GIS or the cached backup.";
+  els.poolCount.textContent = "Data unavailable";
 }
 
 })().catch((error) => {
@@ -1206,6 +1401,6 @@ function showFatalError(error) {
   if (banner) {
     banner.hidden = false;
     banner.classList.add("is-error");
-    banner.textContent = "Bremerton Ready could not load. Check the console and GIS service availability.";
+    banner.textContent = "Bremerton Ready could not load City GIS or the cached backup.";
   }
 });

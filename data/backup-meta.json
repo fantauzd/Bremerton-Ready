@@ -1,0 +1,18 @@
+{
+  "generatedDate": "2026-10-22",
+  "streetSnapshotSource": "City of Bremerton internal street layer exported for Bremerton Ready training fallback",
+  "districtSnapshotSource": "City of Bremerton Council Districts 2020",
+  "policy": {
+    "cachedCitywide": "Only street segments intersecting at least one Council District 1-7 polygon are included in normal Citywide/district study.",
+    "outsideRoads": "Outside-city and mutual-aid road segments remain packaged in streets.geojson for possible future study modes but are excluded from normal cached study."
+  },
+  "counts": {
+    "streetSegmentsTotal": 3274,
+    "streetSegmentsCitywide": 2344,
+    "streetSegmentsOutsideCitywide": 930,
+    "uniqueStreetNamesIntersectingCitywide": 604,
+    "uniqueStreetNamesOutsideAnyDistrict": 247,
+    "uniqueStreetNamesSpanningInsideAndOutside": 67,
+    "councilDistricts": 7
+  }
+}
